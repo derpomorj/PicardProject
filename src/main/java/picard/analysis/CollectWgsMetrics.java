@@ -52,6 +52,7 @@ import java.io.File;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.LongStream;
 
 import static picard.cmdline.StandardOptionDefinitions.MINIMUM_MAPPING_QUALITY_SHORT_NAME;
 
@@ -155,8 +156,8 @@ static final String USAGE_DETAILS = "<p>This tool collects metrics about the fra
                 optional = true)
         public File INTERVALS;
 
-        public File getIntervalFile() { return INTERVALS; };
-    };
+        public File getIntervalFile() { return INTERVALS; }
+    }
 
     /** Metrics for evaluating the performance of whole genome sequencing experiments. */
     public static class WgsMetrics extends MergeableMetricBase {
@@ -449,8 +450,6 @@ static final String USAGE_DETAILS = "<p>This tool collects metrics about the fra
     private final Object referenceCounterLock = new Object();
     @Override
     protected int doWork() {
-        int poolSize = 3;
-        ExecutorService executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors()-1);
         IOUtil.assertFileIsReadable(INPUT);
         IOUtil.assertFileIsWritable(OUTPUT);
         IOUtil.assertFileIsReadable(REFERENCE_SEQUENCE);
@@ -461,11 +460,11 @@ static final String USAGE_DETAILS = "<p>This tool collects metrics about the fra
 
         // it doesn't make sense for the locus accumulation cap to be lower than the coverage cap
         if (LOCUS_ACCUMULATION_CAP < COVERAGE_CAP) {
-            log.warn("Setting the LOCUS_ACCUMULATION_CAP to be equal to the COVERAGE_CAP (" + COVERAGE_CAP + ") because it should not be lower");
+            log.warn("Setting the LOCUS_ACCUMULATION_CAP to be equal to the COVERAGE_CAP (" + COVERAGE_CAP
+                     + ") because it should not be lower");
             LOCUS_ACCUMULATION_CAP = COVERAGE_CAP;
         }
-        final SamReader in = getSamReader();
-        // Setup all the inputs
+        getSamReader();
         LinkedList<IntervalList> allIntervals = new LinkedList<>();
         for (final SAMSequenceRecord rec : this.header.getSequenceDictionary().getSequences()) {
             IntervalList intervals = new IntervalList(this.header);
@@ -484,7 +483,8 @@ static final String USAGE_DETAILS = "<p>This tool collects metrics about the fra
         if (!COUNT_UNPAIRED) {
             filters.add(pairFilter);
         }
-        final ProgressLogger progress = new ProgressLogger(log, 10000000, "Processed", "loci");
+        int poolSize = Runtime.getRuntime().availableProcessors() - 1;
+        ExecutorService executor = Executors.newFixedThreadPool(poolSize);
         final AbstractWgsMetricsCollector mainCollector = getCollector(COVERAGE_CAP, getIntervalsToExamine());
         int i = 0;
         final AtomicInteger ReferenceCounter = new AtomicInteger(0);
@@ -492,8 +492,8 @@ static final String USAGE_DETAILS = "<p>This tool collects metrics about the fra
         final ReferenceSequenceFileWalker refWalker1 = new ReferenceSequenceFileWalker(REFERENCE_SEQUENCE);
         while (intervalListIterator.hasNext()) {
             final IntervalList interval = intervalListIterator.next();
-            while (ReferenceCounter.get() > poolSize*2){
-                synchronized (referenceCounterLock){
+            while (ReferenceCounter.get() > poolSize * 2) {
+                synchronized (referenceCounterLock) {
                     try {
                         referenceCounterLock.wait(25000);
                     } catch (InterruptedException e) {
@@ -501,51 +501,43 @@ static final String USAGE_DETAILS = "<p>This tool collects metrics about the fra
                     }
                 }
             }
-            System.out.println("start reading "+ i +" reference");
+            System.out.println("start reading " + i + " reference");
             final ReferenceSequence referenceSequence = refWalker1.get(i);
             ReferenceCounter.incrementAndGet();
             System.out.println("started execution " + i + " reference ");
             ++i;
             executor.execute(() -> {
-                //System.out.println(Thread.currentThread().getId());
                 final SamReader in1 = getSamReader();
-                //final ReferenceSequenceFileWalker refWalker = new ReferenceSequenceFileWalker(REFERENCE_SEQUENCE);
                 final AbstractLocusIterator iterator = getLocusIterator(in1, interval);
                 iterator.setSamFilters(filters);
                 iterator.setMappingQualityScoreCutoff(0); // Handled separately because we want to count bases
                 iterator.setIncludeNonPfReads(false);
                 final AbstractWgsMetricsCollector collector = getCollector(COVERAGE_CAP, interval);
-                final WgsMetricsProcessor processor = getWgsMetricsProcessor(progress, referenceSequence, iterator, collector);
-                processor.processFile();
+                while (iterator.hasNext()) {
+                    final AbstractLocusInfo info = iterator.next();
+                    boolean referenceBaseN = collector.isReferenceBaseN(info.getPosition(), referenceSequence);
+                    if (referenceBaseN) {
+                        continue;
+                    }
+                    collector.addInfo(info, referenceSequence, false);
+                }
+                // check that we added the same number of bases to the raw coverage histogram and the base quality histograms
+                final long sumBaseQ = Arrays.stream(collector.unfilteredBaseQHistogramArray).sum();
+                final long sumDepthHisto = LongStream.rangeClosed(0, collector.coverageCap).map(k -> (k * collector.unfilteredDepthHistogramArray[(int) k])).sum();
+                if (sumBaseQ != sumDepthHisto) {
+                    log.error("Coverage and baseQ distributions contain different amount of bases!");
+                }
                 ((WgsMetricsCollector) mainCollector).addResults((WgsMetricsCollector) collector);
                 System.out.println(interval.getIntervals().get(0).toString() + " DONE!");
                 ReferenceCounter.decrementAndGet();
-                synchronized (referenceCounterLock){
+                synchronized (referenceCounterLock) {
                     referenceCounterLock.notify();
                 }
             });
         }
-       /* allIntervals.forEach(interval -> {
-            final ReferenceSequenceFileWalker refWalker1 = new ReferenceSequenceFileWalker(REFERENCE_SEQUENCE);
-            refWalker1.get(i);
-            executor.execute(()->{
-                System.out.println(Thread.currentThread().getId());
-                final SamReader in1 = getSamReader();
-                final ReferenceSequenceFileWalker refWalker = new ReferenceSequenceFileWalker(REFERENCE_SEQUENCE);
-                final AbstractLocusIterator iterator = getLocusIterator(in1,interval);
-                iterator.setSamFilters(filters);
-                iterator.setMappingQualityScoreCutoff(0); // Handled separately because we want to count bases
-                iterator.setIncludeNonPfReads(false);
-                final AbstractWgsMetricsCollector collector = getCollector(COVERAGE_CAP, interval);
-                final WgsMetricsProcessor processor = getWgsMetricsProcessor(progress, refWalker, iterator, collector);
-                processor.processFile();
-                ((WgsMetricsCollector)mainCollector).addResults((WgsMetricsCollector) collector);
-                System.out.println(interval.getIntervals().get(0).toString() + " DONE!");
-            });
-        });*/
         executor.shutdown();
         try {
-            executor.awaitTermination(50, TimeUnit.MINUTES);
+            executor.awaitTermination(5, TimeUnit.DAYS);
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
@@ -566,7 +558,7 @@ static final String USAGE_DETAILS = "<p>This tool collects metrics about the fra
     }
 
     private <T extends AbstractRecordAndOffset> WgsMetricsProcessorImpl<T> getWgsMetricsProcessor(
-            ProgressLogger progress, ReferenceSequence refWalker,
+            ProgressLogger progress, ReferenceSequenceFileWalker refWalker,
             AbstractLocusIterator<T, AbstractLocusInfo<T>> iterator, AbstractWgsMetricsCollector<T> collector) {
         return new WgsMetricsProcessorImpl<>(iterator, refWalker, collector, progress);
     }

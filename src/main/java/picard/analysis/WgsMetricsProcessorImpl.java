@@ -55,7 +55,7 @@ public class WgsMetricsProcessorImpl<T extends AbstractRecordAndOffset> implemen
     /**
      * ReferenceWalker for a processed reference sequence
      */
-    private final ReferenceSequence refWalker;
+    private final ReferenceSequenceFileWalker refWalker;
     /**
      * Logger for the progress of work
      */
@@ -70,7 +70,7 @@ public class WgsMetricsProcessorImpl<T extends AbstractRecordAndOffset> implemen
      * @param progress  logger
      */
     public WgsMetricsProcessorImpl(AbstractLocusIterator<T, AbstractLocusInfo<T>> iterator,
-            ReferenceSequence refWalker,
+            ReferenceSequenceFileWalker refWalker,
             AbstractWgsMetricsCollector<T> collector,
             ProgressLogger progress) {
         this.iterator = iterator;
@@ -84,20 +84,21 @@ public class WgsMetricsProcessorImpl<T extends AbstractRecordAndOffset> implemen
      */
     @Override
     public void processFile() {
-       // long counter = 0;
+        long counter = 0;
         while (iterator.hasNext()) {
             final AbstractLocusInfo<T> info = iterator.next();
-            boolean referenceBaseN = collector.isReferenceBaseN(info.getPosition(), refWalker);
+            final ReferenceSequence ref = refWalker.get(info.getSequenceIndex());
+            boolean referenceBaseN = collector.isReferenceBaseN(info.getPosition(), ref);
+            collector.addInfo(info, ref, referenceBaseN);
             if (referenceBaseN) {
                 continue;
             }
-            collector.addInfo(info, refWalker, false);
 
-            //progress.record(info.getSequenceName(), info.getPosition());
-            /*if (collector.isTimeToStop(++counter)) {
+            progress.record(info.getSequenceName(), info.getPosition());
+            if (collector.isTimeToStop(++counter)) {
                 break;
             }
-            collector.setCounter(counter);*/
+            collector.setCounter(counter);
         }
         // check that we added the same number of bases to the raw coverage histogram and the base quality histograms
         final long sumBaseQ = Arrays.stream(collector.unfilteredBaseQHistogramArray).sum();
