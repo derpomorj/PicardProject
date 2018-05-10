@@ -483,7 +483,7 @@ static final String USAGE_DETAILS = "<p>This tool collects metrics about the fra
         if (!COUNT_UNPAIRED) {
             filters.add(pairFilter);
         }
-        int poolSize = Runtime.getRuntime().availableProcessors() - 1;
+        int poolSize = Runtime.getRuntime().availableProcessors();
         ExecutorService executor = Executors.newFixedThreadPool(poolSize);
         final AbstractWgsMetricsCollector mainCollector = getCollector(COVERAGE_CAP, getIntervalsToExamine());
         int i = 0;
