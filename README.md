@@ -1,3 +1,17 @@
+
+This is a modified version of the ***Picard tool***
+
+There is ***CollectWgsMetrics*** class was amended by the addition of multithreaded data processing
+
+On test runs there was a performance increase of 35-45%, but the amount of memory used is also increasing by 30-40% (on my computer)
+
+Testing data:
+
+Bams: http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/phase3/data/NA12878/
+
+Reference: http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/phase2_reference_assembly_sequence/
+
+
 [![Coverage Status](https://coveralls.io/repos/github/broadinstitute/picard/badge.svg?branch=master)](https://coveralls.io/github/broadinstitute/picard?branch=master)
 [![Build Status](https://travis-ci.org/broadinstitute/picard.svg?branch=master)](https://travis-ci.org/broadinstitute/picard)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/broadinstitute/picard/blob/master/LICENSE.txt)
